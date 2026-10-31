@@ -23,8 +23,12 @@ def need(path, what, linux=False):
     return path
 
 
+# no console window for each compiler run when started from a window (the launcher's build page)
+NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+
+
 def sh(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, creationflags=NO_WINDOW)
     return r.returncode, r.stdout + r.stderr
 
 

@@ -6,12 +6,14 @@
   3. compiles the runtime + the generated code into a native program      -> build/
   4. puts a ready-to-play folder together                                  -> dist/
 
-usage: python build.py [--disc PATH] [--pak] [--zip] [--linux] [--debug] [--jobs N] [--clean]
+usage: python build.py [--disc PATH] [--pak] [--zip] [--into DIR] [--linux] [--debug] [--jobs N] [--clean]
 
   --disc PATH  your disc image (.cue or .bin); default: the first .cue (or .bin) in disc/
   --pak        also turn your disc image into the compact data pack HarvestMoonBTN.pak and put it
                in the dist folder, so the game runs without the disc image
   --zip        also create a .zip of the dist folder
+  --into DIR   put the game into DIR (a folder you play from) instead of dist/; nothing there is
+               deleted (the launcher's "Build from my disc" page uses it)
   --linux      on Windows: cross-build the Linux version (run "python tools/fetch_deps.py --linux")
   --debug      unoptimised build with a console window, for development
   --clean      rebuild everything from scratch
@@ -45,7 +47,14 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-def find_disc(arg):
+def extracted():
+    """the game files are in extract/ already, verified"""
+    out = os.path.join(ROOT, 'extract')
+    return all(os.path.exists(os.path.join(out, n)) and sha256_file(os.path.join(out, n)) == h
+               for n, h in GAME_FILES.items())
+
+
+def find_disc(arg, need=True):
     if arg:
         if not os.path.isfile(arg):
             sys.exit('disc image not found: ' + arg)
@@ -54,6 +63,8 @@ def find_disc(arg):
         hits = sorted(glob.glob(os.path.join(ROOT, 'disc', ext)))
         if hits:
             return hits[0]
+    if not need:
+        return None                 # a rebuild without the disc image, from extract/
     sys.exit('No disc image found.\n'
              'Put your own Harvest Moon: Back to Nature (USA) .cue + .bin into the "disc" folder,\n'
              'or pass it with:  python build.py --disc "path/to/Harvest Moon - Back to Nature.cue"')
@@ -63,8 +74,7 @@ def extract(disc_path):
     """copy the game files the recompiler needs out of the disc image and verify them"""
     out = os.path.join(ROOT, 'extract')
     os.makedirs(out, exist_ok=True)
-    if all(os.path.exists(os.path.join(out, n)) and sha256_file(os.path.join(out, n)) == h
-           for n, h in GAME_FILES.items()):
+    if extracted():
         return
     binpath = resolve_bin(disc_path)
     if not os.path.isfile(binpath):
@@ -123,7 +133,8 @@ def make_pak(disc_path):
 def behind_main():
     """warn when this git checkout lacks commits of main on GitHub: online co-op only connects to a
     game built from the same sources, so a build of an older branch can't play with the others'"""
-    git = lambda *a: subprocess.run(['git', '-C', ROOT, *a], capture_output=True, text=True, timeout=30)
+    git = lambda *a: subprocess.run(['git', '-C', ROOT, *a], capture_output=True, text=True, timeout=30,
+                                    creationflags=native.NO_WINDOW)
     try:
         if git('rev-parse', '--is-inside-work-tree').stdout.strip() != 'true':
             return
@@ -155,8 +166,8 @@ def main():
     linux = opt('--linux') or platform.system() != 'Windows'
 
     behind_main()
-    disc_path = find_disc(disc_arg)
-    print('disc image:', disc_path)
+    disc_path = find_disc(disc_arg, need=opt('--pak') or not extracted())
+    print('disc image:', disc_path or 'none (the game files from it are in extract/)')
     extract(disc_path)
     recompile(opt('--clean'))
     exe = native.build(release=not opt('--debug'), linux_cross=opt('--linux'), clean=opt('--clean'), jobs=jobs)
@@ -167,7 +178,9 @@ def main():
         files.append((os.path.join(os.path.dirname(exe), 'SDL2.dll'), 'SDL2.dll'))
     name = 'HarvestMoonBTN-%s-x64%s' % ('Linux' if linux else 'Windows', '-debug' if opt('--debug') else '')
     # remember the disc image location in hmbtn.ini, unless the build is for another machine
-    out = package(name, files, pak=pak, disc_path=None if opt('--linux') else disc_path, make_zip=opt('--zip'))
+    into = args[args.index('--into') + 1] if '--into' in args else None
+    out = package(name, files, pak=pak, disc_path=None if opt('--linux') else disc_path, make_zip=opt('--zip'),
+                  into=into)
     print('\nDone. Play:  %s' % os.path.join(out, os.path.basename(exe)))
 
 

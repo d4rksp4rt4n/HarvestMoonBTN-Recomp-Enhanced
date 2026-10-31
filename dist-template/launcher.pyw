@@ -10,6 +10,39 @@ import os, re, struct, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))  # also as Launcher.exe
 INI = os.path.join(HERE, 'hmbtn.ini')
 EXE = os.path.join(HERE, 'HarvestMoonBTN.exe' if os.name == 'nt' else 'HarvestMoonBTN')
+# the launcher's release: tools/release.py publishes it on GitHub as v<VERSION>, with Launcher.exe attached;
+# a Launcher.exe finds newer ones there, updates itself and rebuilds the game
+VERSION = '1.0.0'
+RELEASES = 'https://api.github.com/repos/d4rksp4rt4n/HarvestMoonBTN-Recomp-Enhanced/releases/latest'
+LAUNCHER_EXE = 'HarvestMoonBTN-Launcher.exe'
+GAME_FILES = ('SLUS_011.15', 'A_FILE.HDT', 'A_FILE.BIN')    # what build.py reads from the disc (extract/)
+# the build scripts and sources for the Build page: inside Launcher.exe (tools/build_launcher.py), or the
+# checkout this folder was built from (dist/<name>); WORK gets the downloads, your game's files and the build
+if getattr(sys, 'frozen', False):
+    SRC, WORK = os.path.join(getattr(sys, '_MEIPASS', ''), 'src'), os.path.join(HERE, 'build-files')
+else:
+    SRC = WORK = os.path.dirname(os.path.dirname(HERE))
+if not os.path.isfile(os.path.join(SRC, 'build.py')):
+    SRC = None
+
+if getattr(sys, 'frozen', False) and sys.argv[1:2] and sys.argv[1].endswith('.py'):
+    # "Launcher.exe script.py ...": the Build page runs the build scripts with the Python this exe carries
+    import runpy, traceback
+    import collections, concurrent.futures, glob, hashlib, json, platform, shutil, tarfile, urllib.request, \
+        zipfile, zlib  # noqa: F401  (what the scripts import, so that PyInstaller packs it)
+    if sys.stdout:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace', line_buffering=True)
+    sys.argv = sys.argv[1:]
+    sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[0])))
+    try:
+        runpy.run_path(sys.argv[0], run_name='__main__')
+    except SystemExit:
+        raise
+    except BaseException:
+        traceback.print_exc()                   # to the Build page, not a window of its own
+        sys.exit(1)
+    sys.exit()
 
 BUTTONS = ['up', 'down', 'left', 'right', 'cross', 'circle', 'square', 'triangle',
            'l1', 'r1', 'l2', 'r2', 'start', 'select']
@@ -342,6 +375,18 @@ UI = {
         'my_ip': 'Addresses of this PC (give one to your friend): %s',
         'build_id': "Game version: %s. Your friend's must be the same (it is also in the game's window title).",
         'need_addr': 'Fill in the host address first.',
+        'build': 'Build from my disc', 'build_sub': 'Makes the PC game from your own disc image, here in this '
+        'folder. The first time, it also downloads the compiler (about 65 MB, checked file by file).',
+        'pak': 'Data pack', 'pak_d': "Also copies the game's data into HarvestMoonBTN.pak: the disc image is not "
+        'needed afterwards.',
+        'build_btn': 'Build the game', 'building': 'Building... (this takes a few minutes)',
+        'built': 'Done: the game is ready.', 'build_failed': 'The build stopped: the last lines above say why.',
+        'need_cue': 'Choose your disc image (.cue or .bin) first.',
+        'update': 'Update to %s', 'update_note': 'Launcher %s is out.',
+        'updating': 'Downloading the new launcher...', 'update_failed': 'The update failed: %s',
+        'ask_stop': 'A build is running. Stop it and close?',
+        'build_note': 'The build-files folder holds files from your disc: it is for this PC only. To give the '
+        'game to a friend, give them this launcher; they build from their own disc.',
         'how': 'How to connect', 'how_list': [
             ('1', 'Both need this same game folder version (the same HarvestMoonBTN.exe).'),
             ('2', 'Easiest: both install Radmin VPN or ZeroTier and join the same network; the host gives the '
@@ -416,6 +461,18 @@ UI = {
         'my_ip': 'Endereços deste PC (passe um para o amigo): %s',
         'build_id': 'Versão do jogo: %s. A do amigo tem que ser a mesma (ela também fica no título da janela do jogo).',
         'need_addr': 'Preencha o endereço do anfitrião primeiro.',
+        'build': 'Montar do meu disco', 'build_sub': 'Faz o jogo de PC a partir da imagem do seu próprio disco, '
+        'aqui nesta pasta. Na primeira vez, também baixa o compilador (uns 65 MB, conferido arquivo por arquivo).',
+        'pak': 'Pacote de dados', 'pak_d': 'Também copia os dados do jogo para HarvestMoonBTN.pak: depois a imagem '
+        'do disco não é mais necessária.',
+        'build_btn': 'Montar o jogo', 'building': 'Montando... (leva alguns minutos)',
+        'built': 'Pronto: o jogo está montado.', 'build_failed': 'A montagem parou: as últimas linhas acima dizem por quê.',
+        'need_cue': 'Escolha primeiro a imagem do disco (.cue ou .bin).',
+        'update': 'Atualizar para %s', 'update_note': 'Saiu o launcher %s.',
+        'updating': 'Baixando o novo launcher...', 'update_failed': 'A atualização falhou: %s',
+        'ask_stop': 'Uma montagem está em andamento. Parar e fechar?',
+        'build_note': 'A pasta build-files guarda arquivos do seu disco: é só para este PC. Para dar o jogo a um '
+        'amigo, dê este launcher; ele monta com o próprio disco.',
         'how': 'Como conectar', 'how_list': [
             ('1', 'Os dois precisam desta mesma versão do jogo (o mesmo HarvestMoonBTN.exe).'),
             ('2', 'Mais fácil: os dois instalam o Radmin VPN ou o ZeroTier e entram na mesma rede; o anfitrião '
@@ -490,6 +547,20 @@ UI = {
         'my_ip': 'Direcciones de este PC (pásale una a tu amigo): %s',
         'build_id': 'Versión del juego: %s. La de tu amigo tiene que ser la misma (también está en el título de la ventana del juego).',
         'need_addr': 'Escribe primero la dirección del anfitrión.',
+        'build': 'Crear desde mi disco', 'build_sub': 'Hace el juego de PC a partir de la imagen de tu propio '
+        'disco, aquí en esta carpeta. La primera vez también descarga el compilador (unos 65 MB, comprobado '
+        'archivo por archivo).',
+        'pak': 'Paquete de datos', 'pak_d': 'También copia los datos del juego a HarvestMoonBTN.pak: después la '
+        'imagen del disco ya no hace falta.',
+        'build_btn': 'Crear el juego', 'building': 'Creando... (tarda unos minutos)',
+        'built': 'Listo: el juego está creado.', 'build_failed': 'La creación se detuvo: las últimas líneas de '
+        'arriba dicen por qué.',
+        'need_cue': 'Elige primero la imagen del disco (.cue o .bin).',
+        'update': 'Actualizar a %s', 'update_note': 'Salió el launcher %s.',
+        'updating': 'Descargando el nuevo launcher...', 'update_failed': 'La actualización falló: %s',
+        'ask_stop': 'Hay una creación en curso. ¿Detenerla y cerrar?',
+        'build_note': 'La carpeta build-files guarda archivos de tu disco: es solo para este PC. Para darle el '
+        'juego a un amigo, dale este launcher; él lo crea con su propio disco.',
         'how': 'Cómo conectarse', 'how_list': [
             ('1', 'Los dos necesitan esta misma versión del juego (el mismo HarvestMoonBTN.exe).'),
             ('2', 'Lo más fácil: los dos instalan Radmin VPN o ZeroTier y entran en la misma red; el anfitrión '
@@ -555,6 +626,7 @@ def selftest():
     assert cpu_cores()[0] >= 1 and language() in UI and preset_for(2) == 0 and preset_for(8) == 2
     assert all(set(TEXT[l]) == set(TEXT['en']) and set(UI[l]) == set(UI['en']) for l in UI)
     assert mix('#000000', '#ffffff', 0.5) == '#808080'
+    assert vtuple('v1.10.0') > vtuple('1.9.3') > vtuple('1.9') and vtuple('v2') == (2,)
     import tempfile
     cur = os.path.join(tempfile.gettempdir(), 'hmbtn_selftest.cur')
     write_cursor(cur, [[(255, 255, 255), None]] * 29, (1, 0))
@@ -651,6 +723,45 @@ def local_ips():
     return [ip for i, ip in enumerate(ips) if ip not in ips[:i] and not ip.startswith('127.')]
 
 
+def vtuple(v):
+    """'v1.2.3' -> (1, 2, 3)"""
+    return tuple(int(x) for x in re.findall(r'\d+', v)[:3])
+
+
+def latest_release():
+    """(version, download address, sha256 or None) of a newer launcher on GitHub, or None"""
+    import json, urllib.request
+    try:
+        req = urllib.request.Request(RELEASES, headers={'User-Agent': 'HarvestMoonBTN-Launcher',
+                                                        'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rel = json.load(r)
+        asset = next(a for a in rel.get('assets', []) if a['name'] == LAUNCHER_EXE)
+        if vtuple(rel['tag_name']) <= vtuple(VERSION):
+            return None
+    except Exception:                               # offline, no release yet...: no news
+        return None
+    digest = asset.get('digest') or ''
+    return rel['tag_name'].lstrip('v'), asset['browser_download_url'], digest[7:] if digest.startswith('sha256:') else None
+
+
+def self_update(url, sha):
+    """put the new Launcher.exe in place of this one (Windows lets a running exe be renamed, not overwritten)"""
+    import hashlib, urllib.request
+    me = sys.executable
+    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'HarvestMoonBTN-Launcher'}),
+                                timeout=120) as r:
+        data = r.read()
+    if sha and hashlib.sha256(data).hexdigest() != sha:
+        raise OSError('the download is damaged (checksum)')
+    with open(me + '.new', 'wb') as f:
+        f.write(data)
+    if os.path.exists(me + '.old'):
+        os.remove(me + '.old')
+    os.replace(me, me + '.old')
+    os.replace(me + '.new', me)
+
+
 def build_id():
     """the co-op version the game was built with (runtime/netplay.c keeps it as text in the executable)"""
     try:
@@ -662,6 +773,8 @@ def build_id():
 
 
 ASSETS = os.path.join(HERE, 'launcher-assets')
+if not os.path.isdir(ASSETS) and SRC:      # a Launcher.exe on its own: the pictures it carries
+    ASSETS = os.path.join(SRC, 'dist-template', 'launcher-assets')
 BG, CARD, LINE_C = '#ffffff', '#ffffff', '#e6d7b8'
 # .game-box: a pale-to-golden gradient in a 4px frame, light above and left, brown right and below.
 # WOOD marks the widgets that take the gradient's colour at their height.
@@ -698,12 +811,22 @@ def main():
     from tkinter import ttk, filedialog, messagebox, font as tkfont
 
     text = open(INI, encoding='utf-8').read() if os.path.exists(INI) else ''
+    if not text and SRC:                    # a new folder: the first save writes the commented hmbtn.ini
+        text = open(os.path.join(SRC, 'dist-template', 'hmbtn.ini'), encoding='utf-8').read()
     loaded, active = read_ini(text)
     cores, threads = cpu_cores()
     # --page NAME opens that page; --live (F5 in the game): the game is running, every change is saved
     # at once and the game takes it up (the cheats), and there is no Play
     live = '--live' in sys.argv
-    first = sys.argv[sys.argv.index('--page') + 1] if '--page' in sys.argv[:-1] else 'start'
+    # --after-update: a new Launcher.exe just replaced the old one, and rebuilds the game with its sources
+    rebuild = '--after-update' in sys.argv and bool(SRC) and os.path.exists(EXE)
+    first = sys.argv[sys.argv.index('--page') + 1] if '--page' in sys.argv[:-1] else \
+        'build' if SRC and (rebuild or not os.path.exists(EXE)) else 'start'
+    if getattr(sys, 'frozen', False):
+        try:
+            os.remove(sys.executable + '.old')      # left by the last update
+        except OSError:
+            pass
     lang = loaded.get('language') if 'language' in active else None     # the flag chosen last time
     state = {'lang': lang if lang in UI else language(), 'page': first, 'dirty': False, 'note': ''}
 
@@ -1206,6 +1329,99 @@ def main():
             tk.Label(c, text=what, font=F['n'], bg=CARD, fg=BLUE, anchor='w', justify='left',
                      wraplength=px(560)).grid(row=i, column=1, sticky='w', padx=(14, 0), pady=2)
 
+    job = {'proc': None, 'log': [], 'ok': None, 'view': None}    # the build, kept across rebuilt pages
+
+    def build_page(parent):
+        page_head(parent, T('build'), T('build_sub'))
+        c = card(parent)
+        option_row(c, 'disc', 'file', *TEXT[state['lang']]['disc'], True)
+        option_row(c, 'build_pak', 'bool', T('pak'), T('pak_d'), False)
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill='x', padx=24, pady=(0, 10))
+        button(row, T('build_btn'), start_build, accent=True).pack(side='left')
+        note = tk.Label(row, font=F['b'], bg=BG, anchor='w', justify='left')
+        note.pack(side='left', padx=14)
+        c = card(parent, pad=8)
+        log = tk.Text(c, height=14, font=('Consolas' if os.name == 'nt' else 'TkFixedFont', 9), bg=CARD,
+                      fg=TEXT_C, bd=0, wrap='word', state='disabled')
+        log.pack(fill='both', expand=True)
+        tk.Label(parent, text=T('build_note'), font=F['s'], bg=BG, fg=MUTED, anchor='w', justify='left',
+                 wraplength=px(640)).pack(fill='x', padx=24)
+        job['view'] = (log, note)
+        show_log()
+
+    def show_log():
+        if not (job['view'] and job['view'][0].winfo_exists()):
+            return
+        log, note = job['view']
+        log.configure(state='normal')
+        log.delete('1.0', 'end')
+        log.insert('end', ''.join(job['log'][-400:]))
+        log.see('end')
+        log.configure(state='disabled')
+        note.configure(text=T('building') if job['proc'] else '' if job['ok'] is None else
+                       '✔ ' + T('built') if job['ok'] else '⚠ ' + T('build_failed'),
+                       fg=WARN if job['ok'] is False else OK)
+
+    def start_build():
+        import queue, shutil, threading
+        if job['proc']:
+            return
+        disc = game_data(val('disc'))
+        if not disc or not disc.lower().endswith(('.cue', '.bin')):
+            disc = None                     # a rebuild can do with the files a build took from the disc
+            if val('build_pak') == '1' or not all(os.path.exists(os.path.join(WORK, 'extract', n))
+                                                  for n in GAME_FILES):
+                messagebox.showwarning('Harvest Moon', T('need_cue'))
+                return
+        save()
+        if SRC != WORK:                     # the scripts this exe carries, beside the build's own files
+            os.makedirs(WORK, exist_ok=True)
+            for n in ('build.py', 'tools', 'runtime', 'dist-template'):
+                s, d = os.path.join(SRC, n), os.path.join(WORK, n)
+                shutil.copytree(s, d, dirs_exist_ok=True) if os.path.isdir(s) else shutil.copy2(s, d)
+        cmds = [[sys.executable, os.path.join(WORK, 'tools', 'fetch_deps.py'), '--min']] if os.name == 'nt' else []
+        cmds.append([sys.executable, os.path.join(WORK, 'build.py'), '--into', HERE] +
+                    (['--disc', disc] if disc else []) + (['--pak'] if val('build_pak') == '1' else []))
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT='1', PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8')
+        lines = queue.Queue()
+        job.update(log=[], ok=None, proc=True)
+
+        def work():
+            for cmd in cmds:
+                try:
+                    p = subprocess.Popen(cmd, cwd=WORK, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, encoding='utf-8', errors='replace',
+                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                except OSError as e:
+                    lines.put('%s\n' % e)
+                    return lines.put(False)
+                job['proc'] = p
+                for line in p.stdout:
+                    lines.put(line)
+                if p.wait():
+                    return lines.put(False)
+            lines.put(True)
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            done = None
+            while not lines.empty():
+                x = lines.get()
+                if isinstance(x, bool):
+                    done = x
+                else:
+                    job['log'].append(x)
+            if done is None:
+                show_log()
+                root.after(150, poll)
+                return
+            job.update(proc=None, ok=done)
+            if done:                        # the game is there now: the pages that show it
+                build()
+            show_log()
+        poll()
+
     # ---- window ----
     body = tk.Frame(root, bg=BG)
     body.pack(fill='both', expand=True)
@@ -1245,7 +1461,10 @@ def main():
     def play(args=()):
         save()
         if not os.path.exists(EXE):
-            messagebox.showerror('Harvest Moon', T('missing') % EXE)
+            if SRC:
+                show('build')
+            else:
+                messagebox.showerror('Harvest Moon', T('missing') % EXE)
             return
         # the game opens this launcher again with F5: it must not inherit this one's PyInstaller
         # variables (its files are gone by then: "Failed to load Python DLL")
@@ -1270,7 +1489,46 @@ def main():
             a = ('[%s]' % a if ':' in a else a) + ':' + coop_port()
         play(['--join', a])
 
+    def update():
+        if job['proc']:
+            return
+        state['note'] = T('updating')
+        refresh()
+        root.update()
+        try:
+            self_update(*state['update'][1:])
+        except Exception as e:
+            state['note'] = ''
+            refresh()
+            messagebox.showerror('Harvest Moon', T('update_failed') % e)
+            return
+        if state['dirty']:
+            save()
+        subprocess.Popen([sys.executable, '--after-update'], cwd=HERE,
+                         env=dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT='1'))
+        root.destroy()
+
+    def check_updates():
+        """ask GitHub in the background; a newer launcher gets an Update button"""
+        import threading
+        found = []
+        threading.Thread(target=lambda: found.append(latest_release()), daemon=True).start()
+
+        def poll():
+            if not found:
+                return root.after(300, poll)
+            if found[0]:
+                state['update'] = found[0]
+                state['note'] = T('update_note') % found[0][0]
+                build()
+        poll()
+
     def close():
+        if job['proc']:
+            if not messagebox.askyesno('Harvest Moon', T('ask_stop')):
+                return
+            if job['proc'] is not True:
+                job['proc'].kill()
         if state['dirty']:
             a = messagebox.askyesnocancel('Harvest Moon', T('ask_save'))
             if a is None:
@@ -1324,7 +1582,8 @@ def main():
         holder.place(x=2 * m + sw, y=m + px(8), relwidth=1, width=-(3 * m + sw), relheight=1,
                      height=-(2 * m + px(8)))
         pages, navs = {}, {}
-        for name in ('start', 'video', 'game', 'keyboard', 'controller', 'p2', 'coop', 'cheats'):
+        names = ('start', 'video', 'game', 'keyboard', 'controller', 'p2', 'coop', 'cheats')
+        for name in names + (('build',) if SRC else ()):
             # a nav-link; the mouse pointer is already the game's glove
             n = tk.Label(side, text=T(name), font=F['nav'], bg=WOOD, fg=NAV_C, anchor='w', padx=px(10),
                          pady=px(6), cursor=cursor)
@@ -1339,17 +1598,22 @@ def main():
                 coop_page(inner)
             elif name == 'p2':
                 p2_page(inner)
+            elif name == 'build':
+                build_page(inner)
             else:
                 page_head(inner, T(name), T(name + '_sub'))
                 options_page(inner, name)
             tk.Frame(inner, bg=BG, height=12).pack()
         state['pages'], state['navs'] = pages, navs
         # footer
-        status.pack(side='left', padx=16)
+        tk.Label(foot, text='v' + VERSION, font=F['s'], bg=WOOD, fg=MUTED).pack(side='left', padx=(16, 0))
         if not live:
             button(foot, T('play'), play, accent=True).pack(side='right', padx=(6, 16), pady=10)
             button(foot, T('save'), save).pack(side='right', padx=6, pady=10)
         button(foot, T('close'), close).pack(side='right', padx=6, pady=10)
+        if state.get('update') and not live:
+            button(foot, T('update') % state['update'][0], update, accent=True).pack(side='right', padx=6, pady=10)
+        status.pack(side='left', padx=16)           # last: on a narrow window the text gives way, not a button
         show(state['page'])
         refresh()
 
@@ -1370,9 +1634,17 @@ def main():
 
     for v in vars_.values():
         v.trace_add('write', changed)
+    vars_['build_pak'] = tk.StringVar(value='0')    # the Build page's, not a setting
     build()
+    if rebuild:
+        start_build()
+    elif getattr(sys, 'frozen', False) and not live:   # only an exe can replace itself
+        check_updates()
     root.mainloop()
 
 
 if __name__ == '__main__':
-    selftest() if '--selftest' in sys.argv else main()
+    if '--version' in sys.argv:
+        print(VERSION)
+    else:
+        selftest() if '--selftest' in sys.argv else main()

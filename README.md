@@ -85,6 +85,25 @@ names; git ignores everything in it), or pass the path with `--disc`.
 
 ## Building
 
+### Windows, without Python: the launcher
+
+`dist-template/HarvestMoonBTN-Launcher.exe` carries the build scripts and the runtime sources
+(nothing of the game). Put it in an empty folder and open it: its **Build from my disc** page
+asks for your disc image and builds the game into that folder. The first time it downloads
+only the parts of the compiler the build uses (about 65 MB, each file checked against
+`tools/toolchain.txt`; `python tools/fetch_deps.py --min` does the same). Your disc's files and
+the build stay in `build-files/` there. To give the game to a friend, give them the launcher;
+they build from their own disc. After changing the launcher, the runtime or the tools, rebuild
+the exe with `python tools/build_launcher.py` (needs `pip install pyinstaller`), and after
+changing an `#include` or the toolchain, rewrite the file list with `python tools/min_toolchain.py`.
+
+**Updates.** The launcher checks GitHub for a newer release when it opens. **Update** replaces
+the exe with the new one (checked against the SHA-256 GitHub gives for it) and rebuilds the game
+with the new sources, from the files it took from your disc earlier, so the disc image isn't
+needed again. Your saves, settings and textures stay. Both co-op players get the same version
+this way. To publish one: raise `VERSION` in `dist-template/launcher.pyw`, run
+`python tools/build_launcher.py`, commit, merge into main, then `python tools/release.py "what changed"`.
+
 ### Windows
 
 Requirements: [Python 3.8+](https://www.python.org/downloads/) and about 1 GB of disk
@@ -125,7 +144,7 @@ Windows instead (cross-compiling with [Zig](https://ziglang.org)), run
 ### Build options
 
 ```
-python build.py [--disc PATH] [--pak] [--zip] [--linux] [--debug] [--jobs N] [--clean]
+python build.py [--disc PATH] [--pak] [--zip] [--into DIR] [--linux] [--debug] [--jobs N] [--clean]
 ```
 
 | Option | |
@@ -133,6 +152,7 @@ python build.py [--disc PATH] [--pak] [--zip] [--linux] [--debug] [--jobs N] [--
 | `--disc PATH` | your disc image (`.cue` or `.bin`); default: the first one in `disc/` |
 | `--pak` | also create the data pack (see [Playing](#playing)) so the game runs without the disc image |
 | `--zip` | also create a `.zip` of the dist folder |
+| `--into DIR` | put the game into `DIR` (a folder you play from) instead of `dist/`; nothing there is deleted |
 | `--linux` | on Windows: cross-build the Linux version |
 | `--debug` | unoptimised build with a console window, for development |
 | `--jobs N` | number of parallel compiler processes (default: all CPU cores) |
@@ -284,7 +304,10 @@ Details for developers: [docs/TECHNICAL.md](docs/TECHNICAL.md).
 build.py              one-step build: disc image -> native game in dist/
 disc/                 put your .cue/.bin here (ignored by git)
 tools/
-  fetch_deps.py       downloads the Windows toolchain into deps/
+  fetch_deps.py       downloads the Windows toolchain into deps/ (--min: only what the build reads)
+  toolchain.txt       those files with their SHA-256 (written by min_toolchain.py)
+  build_launcher.py   builds dist-template/HarvestMoonBTN-Launcher.exe, with the sources in it
+  release.py          publishes the launcher as a GitHub release (launchers update from there)
   iso.py              disc image + ISO 9660 reader
   mips.py, mdis.py    MIPS decoder, disassembler / cross-reference helper
   recomp.py           the static recompiler (MIPS -> C)

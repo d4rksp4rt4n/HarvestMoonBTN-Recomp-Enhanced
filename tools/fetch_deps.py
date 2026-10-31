@@ -10,9 +10,13 @@
 Every download is checked against a pinned SHA-256.
 Linux hosts do not need this: install a C compiler and the SDL2 development package.
 
-usage: python tools/fetch_deps.py [--linux] [--dest DIR]
+--min: only the files a Windows build reads (tools/toolchain.txt, each with its SHA-256), about
+65 MB of downloads instead of 205 MB, and 150 MB on disk instead of 830 MB: the launcher's
+"Build from my disc" page uses it. Only those bytes of the archives are fetched (HTTP ranges).
+
+usage: python tools/fetch_deps.py [--linux | --min] [--dest DIR]
 """
-import hashlib, os, shutil, sys, tarfile, urllib.request, zipfile
+import hashlib, os, shutil, struct, sys, tarfile, urllib.request, zipfile, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -74,12 +78,98 @@ def safe_extract(archive, dest):
                 t.extractall(dest)
 
 
+def get_range(url, start, end):
+    """bytes start..end-1 of url"""
+    req = urllib.request.Request(url, headers={'Range': 'bytes=%d-%d' % (start, end - 1)})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        if r.status != 206:
+            raise OSError('the server sent the whole file, not the part asked for')
+        return r.read()
+
+
+def zip_members(url, names):
+    """{name: bytes} of these members of the .zip at url, fetching only their bytes"""
+    req = urllib.request.Request(url, headers={'Range': 'bytes=0-0'})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        total = int(r.headers['Content-Range'].split('/')[1])
+    tail = get_range(url, max(0, total - 65536), total)
+    eocd = tail.rfind(b'PK\x05\x06')
+    cd_size, cd_off = struct.unpack_from('<II', tail, eocd + 12)
+    cd = get_range(url, cd_off, cd_off + cd_size)
+    entries, i = {}, 0
+    while cd[i:i + 4] == b'PK\x01\x02':
+        method, csize = struct.unpack_from('<H', cd, i + 10)[0], struct.unpack_from('<I', cd, i + 20)[0]
+        nlen, xlen, clen = struct.unpack_from('<HHH', cd, i + 28)
+        off = struct.unpack_from('<I', cd, i + 42)[0]
+        entries[cd[i + 46:i + 46 + nlen].decode('utf-8')] = (off, method, csize)
+        i += 46 + nlen + xlen + clen
+    missing = [n for n in names if n not in entries]
+    if missing:
+        raise SystemExit('not in %s: %s' % (url, ', '.join(missing[:5])))
+    # each member runs up to the next one's local header; neighbours are fetched in one request
+    ends = sorted(o for o, _, _ in entries.values()) + [cd_off]
+    nxt = {a: b for a, b in zip(ends, ends[1:])}
+    spans = []
+    for n in sorted(names, key=lambda n: entries[n][0]):
+        off = entries[n][0]
+        if spans and off - spans[-1][1] < 1 << 18:
+            spans[-1][1] = nxt[off]
+            spans[-1][2].append(n)
+        else:
+            spans.append([off, nxt[off], [n]])
+    out, done, size = {}, 0, sum(b - a for a, b, _ in spans)
+    for start, end, members in spans:
+        blob = get_range(url, start, end)
+        done += len(blob)
+        print('  %5.1f / %.1f MB' % (done / 1e6, size / 1e6), flush=True)
+        for n in members:
+            off, method, csize = entries[n]
+            p = off - start
+            nlen, xlen = struct.unpack_from('<HH', blob, p + 26)
+            raw = blob[p + 30 + nlen + xlen:p + 30 + nlen + xlen + csize]
+            out[n] = zlib.decompress(raw, -15) if method == 8 else raw
+    return out
+
+
+def fetch_min(dest):
+    want = {}                                   # dep name -> {path in it: sha256}
+    for line in open(os.path.join(ROOT, 'tools', 'toolchain.txt')):
+        if line.strip() and not line.startswith('#'):
+            h, rel = line.rstrip().split('  ', 1)
+            name, rel = rel.split('/', 1)
+            want.setdefault(name, {})[rel] = h
+    for d in DEPS:
+        files = want.get(d['name'])
+        if not files:
+            continue
+        out = os.path.join(dest, d['name'])
+        todo = {r: h for r, h in files.items()
+                if not (os.path.isfile(os.path.join(out, r)) and sha256(os.path.join(out, r)) == h)}
+        if not todo:
+            print('%-14s already present' % d['name'])
+            continue
+        print('%-14s downloading %d files from %s' % (d['name'], len(todo), d['url']), flush=True)
+        got = zip_members(d['url'], [d['top'] + '/' + r for r in todo])
+        for r, h in todo.items():
+            data = got[d['top'] + '/' + r]
+            if hashlib.sha256(data).hexdigest() != h:
+                raise SystemExit('checksum mismatch for %s in %s' % (r, d['url']))
+            path = os.path.join(out, *r.split('/'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + '.part', 'wb') as f:
+                f.write(data)
+            os.replace(path + '.part', path)
+    print('toolchain ready in', dest)
+
+
 def main():
     linux = '--linux' in sys.argv
     dest = os.path.join(ROOT, 'deps')
     if '--dest' in sys.argv:
         dest = os.path.abspath(sys.argv[sys.argv.index('--dest') + 1])
     os.makedirs(dest, exist_ok=True)
+    if '--min' in sys.argv:
+        return fetch_min(dest)
     for d in DEPS:
         if d['linux'] and not linux:
             continue

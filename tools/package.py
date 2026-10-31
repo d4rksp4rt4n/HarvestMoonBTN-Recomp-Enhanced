@@ -40,12 +40,13 @@ DISC_NOTE = ("Put your own disc image of Harvest Moon: Back to Nature (USA) here
              "the .cue file and its .bin file (any file names).\n")
 
 
-def package(name, files, pak=None, disc_path=None, make_zip=False, dist=None):
-    """files: [(source, name in folder)]; returns the folder path"""
+def package(name, files, pak=None, disc_path=None, make_zip=False, dist=None, into=None):
+    """files: [(source, name in folder)]; returns the folder path. into: that folder, where nothing is
+    deleted (only replaced), instead of dist/name"""
     dist = dist or os.path.join(ROOT, 'dist')
-    out = os.path.join(dist, name)
+    out = os.path.abspath(into) if into else os.path.join(dist, name)
     keep = ('saves', 'disc', 'screenshots', 'recordings', 'hmbtn.ini')   # the player's files survive a rebuild
-    if os.path.exists(out):
+    if os.path.exists(out) and not into:
         for n in os.listdir(out):
             if n not in keep:
                 p = os.path.join(out, n)
