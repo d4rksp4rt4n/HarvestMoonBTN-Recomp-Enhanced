@@ -80,8 +80,9 @@ TEXT = {
         'upscale': ('Internal resolution', 'Draws the 3D 2, 3 or 4 times larger than the original 320x240, '
                     'for smoother edges (1 = original). The processor draws the picture, so each step costs a '
                     'lot more: 2 for 2 cores, 3 for 4 cores, 4 for 6 or more.'),
-        'widescreen': ('Widescreen', 'Shows more of the farm and town at the sides. Title, menus and videos stay '
-                       '4:3. With resolution 2 or more, people and the HUD keep their shape.'),
+        'widescreen': ('Widescreen', 'Shows more of the farm and town at the sides. Videos stay 4:3. With '
+                       'resolution 2 or more, people and the HUD keep their shape, and the title '
+                       'screen and menus fill the screen too.'),
         'pgxp': ('Precise 3D (PGXP)', 'No more wobbling polygons, the PlayStation\'s trademark shimmer.'),
         'crackfix': ('Close cracks between models', 'Fills the thin gaps precise 3D opens where models meet '
                      '(ground tiles, door frames, fences on the ground), as the PlayStation shows them. Costs '

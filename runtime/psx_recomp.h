@@ -128,7 +128,7 @@ static inline void HUD_BEGIN(void) {
     if (g_sprite_tags) gpu_hud_begin(g_sprite_ws != 1.0f);
 }
 static inline void SPRITE_BEGIN(uint32_t x, uint32_t y) {
-    if (g_menu_tile && g_sprite_ws != 1.0f) { if (g_sprite_tags) gpu_menu_begin(); }
+    if (g_menu_tile && g_sprite_ws != 1.0f) { if (g_sprite_tags) gpu_menu_begin(g_menu_tile); }
     else if (g_hud_call && g_sprite_ws != 1.0f) HUD_BEGIN();
     else if (g_sprite_tags) gpu_sprite_begin((int16_t)x, (int16_t)y);
 }

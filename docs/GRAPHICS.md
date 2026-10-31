@@ -195,8 +195,8 @@ with the squeezed coordinates, so it draws what a wider screen would show.
   sprite is squeezed by the same factor about its anchor (nearest texel, like depth scaling;
   at upscale 4 and 16:9 a texel is exactly 3 pixels wide). This needs upscale 2 or more but
   not PGXP: without PGXP the anchors are recorded with no sub-pixel offset.
-- **Screens without 3D stay 4:3.** The title screen, menus and videos are 2D pictures. The
-  picture is shown wide while the game projected at least 32 vertices in one of the last 10
+- **Screens without 3D stay 4:3,** except the title screen and the full-screen menus (below).
+  Videos, the map and "Now Loading" are 2D pictures. The picture is shown wide while the game projected at least 32 vertices in one of the last 10
   frames, and never for 24-bit video. "Any projection" is not enough: with the full-screen
   Start menu open the game still projects one vertex every other frame (against ~2,600 for
   the house), and the menu came out stretched.
@@ -207,18 +207,35 @@ with the squeezed coordinates, so it draws what a wider screen would show.
   the pixels with red, green and blue at 0 or 1): the Start menu is less than 13% black from
   its first frame after the fade. In the new-game intro and the village tour the only
   switches left are for the Start menu, on its first frame and on the black frame after it.
-- **Full-screen menus are 4:3 from their first frame.** The toolbox in the house opens straight
-  from the room, with no black in between, so it stayed wide and stretched. Every full-screen
-  menu (toolbox, Start menu, memory card screens) draws the same scrolling tiled background:
-  800223D4 tiles the screen through a callback that builds each tile with the sprite builder,
-  so the tiles are tagged while it calls it (jalr at 80022498). The game builds a frame while
-  the previous one is shown, so the GPU notes, for each drawing buffer (top or bottom of VRAM),
-  whether the frame last drawn there had a menu background, and the picture shown is 4:3 when
-  its buffer holds a menu: switching on a "menu was drawn" signal instead showed the room
-  squeezed for 3 frames before the toolbox and the toolbox stretched for 3 frames after it.
-  The HUD isn't squeezed in a frame that draws a menu background.
+- **Full-screen menus and the title screen fill the wide picture** (upscale 2+), from their
+  first frame. Every full-screen menu (toolbox, Start menu, memory card screens) draws the same
+  scrolling background of 24 × 24 animal tiles: 800223D4 tiles the screen (x −12…344, 15 tiles a
+  row) through a callback that builds each tile with the sprite builder, so the tiles are tagged
+  while it calls it (jalr at 80022498). The four animals take turns and each row starts one
+  later, so the pattern repeats every 96 pixels across (diagonal stripes, scrolling diagonally
+  one pixel every fourth frame). The title screen's background (800B944C in GF_TITLE) is a
+  320 × 240 meadow drawn whole at 0,0 and twice more as see-through 3 × 3 grids of itself that
+  scroll, so it repeats every 320 pixels; it is tagged the same way. The Natsume logo before it
+  (800B9324) is one sprite over a white screen clear, which covers the wide picture as it is: the
+  logo is tagged with no background to repeat, so the screen is wide and the logo keeps its 4:3
+  shape (the black after it stays wide too, so the intro never switches). In the upscaled copy each
+  background tile is squeezed about the middle, like the HUD, and drawn again a period, two
+  periods, … to the left and right to fill the sides; the drawing area shows the tile where it
+  is, the period left of it only the copy one period left, and so on, so every pixel gets
+  exactly one copy (the title's see-through grids aren't blended twice) and the sides scroll
+  with the middle without seams. Everything drawn after the background (windows, text,
+  cursors, icons, selection boxes, the title's logo, flowers and animals) keeps its 4:3 shape in
+  the middle, like the HUD (a full-width rectangle, such as a fade, stays full width). The
+  native VRAM, and so the game, is unchanged. The game builds a frame while the previous one is
+  shown, so the GPU notes, for each drawing buffer (top or bottom of VRAM), whether the frame
+  last drawn there had such a background, and the picture is wide when its buffer holds one:
+  the toolbox, which opens straight from the room, stays wide throughout. A picture without
+  3D after a menu (black, "Now Loading") is 4:3 as before. Before, these screens were shown at
+  4:3.
 - **The HUD keeps its 4:3 shape, centred.** The clock, dialogue boxes, portraits and text over
-  the 3D view are squeezed back by the same factor about the middle of the picture, in the
+  the 3D view are squeezed back by the same factor about the middle of the picture (the drawing
+  offset plus half the display's width; not the middle of the drawing area, which the toolbox
+  and rucksack narrow to their help box to clip its text: it came out 5 pixels right), in the
   upscaled copy (upscale 2+), so they keep their size and sit in the middle 4:3 area of the
   wide picture. They are found by the routines that build them, traced by recording which
   function wrote each GPU command in a frame with the clock and one with a dialogue: window

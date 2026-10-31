@@ -327,10 +327,11 @@ void gpu_held_begin(int on)
     begin_map(&player_map);
 }
 
-/* Widescreen: full-screen menus (toolbox, Start menu, memory card screens) are shown at 4:3. The
- * game builds a frame while the previous one is shown, so what decides is the picture: the frame
- * (VBlank count) each drawing buffer (top or bottom of VRAM) was last drawn in, and the last one
- * with a menu background tile in it. */
+/* Widescreen: full-screen menus (toolbox, Start menu, memory card screens) and the title screen
+ * fill the wide picture: their background is repeated at the sides and the rest keeps its 4:3
+ * shape in the middle (bg_wide). The game builds a frame while the previous one is shown, so what
+ * decides is the picture: the frame (VBlank count) each drawing buffer (top or bottom of VRAM) was
+ * last drawn in, and the last one with such a background tile in it. */
 static uint32_t buf_drawn[2], buf_menu[2];
 static inline int draw_buf(void)
 {
@@ -348,10 +349,10 @@ int gpu_display_menu(void)
     return buf_menu[b] && buf_menu[b] == buf_drawn[b];
 }
 
-void gpu_menu_begin(void)
+void gpu_menu_begin(int period)
 {
-    static const SpriteMap menu = { 0.0f, 0.0f, 1.0f, 0.0f, MENU_CX, 0 };
-    ROUTE_BUILD(gpu_menu_begin());
+    const SpriteMap menu = { 0.0f, 0.0f, 1.0f, 0.0f, MENU_CX, (int16_t)period };   /* cy: the period */
+    ROUTE_BUILD(gpu_menu_begin(period));
     g_sprite_on = 1;
     sprite_map = menu;
 }
@@ -698,13 +699,14 @@ static inline int32_t sprite_coord(int32_t v, int32_t c, float d, float s)
     return (int32_t)lrintf(((float)c + d + (float)(v - c) * s) * (float)TH.n);
 }
 
-/* The squeeze of the HUD: the world's while the picture is a 3D scene (shown wide) and not a menu,
- * asked when the HUD is drawn. When it is built is too early: the game builds the HUD before it
- * projects the 3D scene, so the first frame after a black screen isn't known to be 3D yet. */
+/* The squeeze of the HUD: the world's while the picture is shown wide, a 3D scene or a menu or
+ * title screen, asked when the HUD is drawn. When it is built is too early: the game builds the
+ * HUD before it projects the 3D scene, so the first frame after a black screen isn't known to be
+ * 3D yet. */
 int (*g_scene_3d)(void);
 static inline float hud_sx(void)
 {
-    return (!g_scene_3d || g_scene_3d()) && !drawing_menu() ? g_sprite_ws : 1.0f;
+    return !g_scene_3d || drawing_menu() || g_scene_3d() ? g_sprite_ws : 1.0f;
 }
 
 /* Scale of the sprite tagged t: its depth scale (with depth scaling), and horizontally the
@@ -722,10 +724,15 @@ static inline float sprite_sy(const PgxpWord *t)
 }
 
 /* Horizontal scale centre of the sprite tagged t (drawing offset included): its anchor, or for
- * the HUD the middle of the drawing area. */
+ * the HUD the middle of the screen drawn: the drawing offset (the buffer's corner) plus half the
+ * display's width. Not the middle of the drawing area: the toolbox narrows that to its help box
+ * (30..319) to clip the text, which then came out 5 pixels to the right. */
 static inline int32_t sprite_cx(const PgxpWord *t)
 {
-    return t->cx == HUD_CX ? (S.clip_x0 + S.clip_x1 + 1) / 2 : t->cx + S.offs_x;
+    static const int16_t disp_w[4] = { 256, 320, 512, 640 };
+    if (t->cx != HUD_CX)
+        return t->cx + S.offs_x;
+    return S.offs_x + ((S.disp_mode & 0x40u) ? 368 : disp_w[S.disp_mode & 3u]) / 2;
 }
 
 /* ---- Frame interpolation (prototype) ----
@@ -2160,11 +2167,12 @@ static void draw_sprite(int32_t x0, int32_t y0, int32_t w, int32_t h,
 }
 
 /* The upscaled copy of a tagged sprite rectangle scaled by sx, sy (depth, widescreen): the target
- * pixels between its scaled corners, each taking the texel under its centre (nearest, like the
- * native sprite), or with tex_rep the replacement image's pixel there (also for untagged ones). */
+ * pixels between its scaled corners (and target columns cx0..cx1 - 1), each taking the texel under
+ * its centre (nearest, like the native sprite), or with tex_rep the replacement image's pixel there
+ * (also for untagged ones). */
 static void draw_sprite_scaled(int32_t x0, int32_t y0, int32_t w, int32_t h, uint32_t u0, uint32_t v0,
                                uint32_t color, int tex, int raw, int blend, const PgxpWord *t,
-                               float sx, float sy)
+                               float sx, float sy, int32_t cx0, int32_t cx1)
 {
     static int32_t col_tx[4096], col_ix[4096];
     const int32_t n = TH.n, cx = sprite_cx(t), cy = t->cy + S.offs_y;
@@ -2187,9 +2195,9 @@ static void draw_sprite_scaled(int32_t x0, int32_t y0, int32_t w, int32_t h, uin
         if (!raw && color == 0x808080u)
             raw = 1;
     }
-    if (X0 < S.clip_x0 * n) X0 = S.clip_x0 * n;
+    if (X0 < cx0) X0 = cx0;
     if (Y0 < S.clip_y0 * n) Y0 = S.clip_y0 * n;
-    if (X1 > (S.clip_x1 + 1) * n) X1 = (S.clip_x1 + 1) * n;
+    if (X1 > cx1) X1 = cx1;
     if (Y1 > (S.clip_y1 + 1) * n) Y1 = (S.clip_y1 + 1) * n;
     if (X1 - X0 > 4096)
         X1 = X0 + 4096;
@@ -2225,6 +2233,29 @@ static void draw_sprite_scaled(int32_t x0, int32_t y0, int32_t w, int32_t h, uin
                 plot(&TH, (uint32_t)px, (uint32_t)py, fill, 0, blend);
             }
         }
+    }
+}
+
+/* Widescreen: the upscaled copy of a tile of a full-screen 2D background (menus, title screen) that
+ * repeats every period native pixels across, squeezed about the middle like the HUD so it keeps its
+ * shape, and repeated to fill the wide picture: the drawing area shows it where it is, the period
+ * left of the area's left edge shows it one period left, the period before that two periods left,
+ * and so on, likewise to the right. Every target pixel takes one of the copies, so see-through
+ * tiles aren't blended twice. */
+static void bg_wide(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t u, uint32_t v, uint32_t color,
+                    int tex, int raw, int blend, int32_t period)
+{
+    const float s = g_sprite_ws;
+    const int32_t n = TH.n, c = sprite_cx(&hud_word), x0 = S.clip_x0, x1 = S.clip_x1 + 1;
+    const int32_t K = (int32_t)ceilf((float)(x1 - x0) * 0.5f * (1.0f / s - 1.0f) / (float)period);
+    int32_t k;
+    for (k = -K; k <= K; k++) {
+        /* native span of copy k: the drawing area, or the k-th period beside it */
+        int32_t a = k < 0 ? x0 + k * period : k > 0 ? x1 + (k - 1) * period : x0, b = k ? a + period : x1;
+        int32_t A = sprite_coord(a, c, 0.0f, s), B = sprite_coord(b, c, 0.0f, s);
+        if (x + k * period < b && x + k * period + w > a)
+            draw_sprite_scaled(x + k * period, y, w, h, u, v, color, tex, raw, blend, &hud_word, s, 1.0f,
+                               A < x0 * n ? x0 * n : A, B > x1 * n ? x1 * n : B);
     }
 }
 
@@ -2271,13 +2302,16 @@ static void cmd_rect(const uint32_t *p)
     const TexImage *rep = NULL;
     PgxpWord ttmp;
     float sx = 1.0f, sy = 1.0f;
+    int32_t period = 0;
     if (TH.buf && g_sprite_tags) {      /* sprite built at a projected point, or HUD */
         t = cmd_addr[1] != 0xFFFFFFFFu ? &pgxp_mem[(cmd_addr[1] & 0x1FFFFCu) >> 2] : NULL;
         if (t && !(t->w < 0.0f && t->value == p[1]))
             t = NULL;
-        if (t && t->cx == MENU_CX) {        /* a menu background tile, drawn as it is */
+        if (t && t->cx == MENU_CX) {        /* a menu's or the title's background tile: bg_wide */
             buf_menu[draw_buf()] = anchor_gen;
-            t = NULL;
+            hud_after = 1;                  /* what is drawn over it keeps its 4:3 shape */
+            period = t->cy;
+            t = period > 0 ? NULL : &hud_word;  /* no background to repeat (Natsume logo): like the HUD */
         } else if (t && t->cx == HUD_CX) {
             if (hud_sx() != 1.0f)
                 hud_after = 1;
@@ -2296,14 +2330,18 @@ static void cmd_rect(const uint32_t *p)
         rep_su = (float)rep->w / (float)w;
         rep_sv = (float)rep->h / (float)h;
     }
-    if (rep || sx != 1.0f || sy != 1.0f) {              /* scaled or replaced: native as usual, then the copy */
+    if (rep || sx != 1.0f || sy != 1.0f || period > 0) {   /* scaled or replaced: native as usual, then the copy */
         static const PgxpWord untagged = { 0, 0.0f, 0.0f, -1.0f, 0, 0, 0.0f };
         uint16_t *hb = TH.buf;
         TH.buf = NULL;
         draw_sprite(x, y, w, h, u, v, color, tex, tex && raw, abe ? (int)S.abr : -1);
         TH.buf = hb;
         tex_rep = rep;
-        draw_sprite_scaled(x, y, w, h, u, v, color, tex, tex && raw, abe ? (int)S.abr : -1, t ? t : &untagged, sx, sy);
+        if (period > 0)
+            bg_wide(x, y, w, h, u, v, color, tex, tex && raw, abe ? (int)S.abr : -1, period);
+        else
+            draw_sprite_scaled(x, y, w, h, u, v, color, tex, tex && raw, abe ? (int)S.abr : -1, t ? t : &untagged, sx, sy,
+                               S.clip_x0 * TH.n, (S.clip_x1 + 1) * TH.n);
         tex_rep = NULL;
         return;
     }

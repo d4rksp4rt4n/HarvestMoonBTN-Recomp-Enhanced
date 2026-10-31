@@ -88,10 +88,13 @@ void     gpu_sprite_alias(int ax, int ay, int bx, int by);   /* point b uses anc
 void     gpu_held_begin(int on);  /* tag what the player holds with the player's anchor (on = 0: drop; 2: the second farmer's) */
 extern int g_held_call;           /* the player's held object is being drawn */
 extern int g_item_call;           /* an item on (or thrown to) the ground is being drawn */
-/* Widescreen: g_menu_tile is set while a full-screen menu's background is tiled; its tiles are
- * tagged (gpu_menu_begin), and gpu_display_menu says the picture shown is such a menu (4:3). */
+/* Widescreen: g_menu_tile is set while a full-screen menu's background is tiled (or the title
+ * screen's drawn) to the pattern's period across in pixels; its tiles are tagged
+ * (gpu_menu_begin) and repeated to fill the wide picture, and gpu_display_menu says the picture
+ * shown is such a screen. -1: a sprite of a screen with no background to repeat (the Natsume
+ * logo over a plain screen clear), which keeps its 4:3 shape on the wide screen. */
 extern int g_menu_tile;
-void     gpu_menu_begin(void);
+void     gpu_menu_begin(int period);
 int      gpu_display_menu(void);
 void     gpu_sprite_tag(uint32_t addr, uint32_t value);
 /* Widescreen HUD: the following gpu_sprite_tag calls (on = 1) tag the HUD, which is squeezed by
@@ -151,7 +154,7 @@ void     view2_gpu_pgxp_store(uint32_t addr, uint32_t value, int ok, float x, fl
 void     view2_gpu_sprite_anchor(int x, int y, float dx, float dy, float s, float z, int player);
 void     view2_gpu_sprite_begin(int x, int y);
 void     view2_gpu_held_begin(int on);
-void     view2_gpu_menu_begin(void);
+void     view2_gpu_menu_begin(int period);
 void     view2_gpu_hud_begin(int on);
 void     view2_gpu_sprite_alias(int ax, int ay, int bx, int by);
 void     view2_gpu_sprite_tag(uint32_t addr, uint32_t value);

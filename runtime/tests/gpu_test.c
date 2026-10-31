@@ -1281,19 +1281,54 @@ static void test_pgxp_sprite(void)
         g_sprite_depth = 0;
     }
 
-    /* widescreen menus: a frame with a menu background tile makes its buffer a menu (shown at 4:3),
-     * and the tile isn't squeezed, also after HUD; the next frame there without one is no menu */
+    /* widescreen menus (and the title screen): a frame with a background tile makes its buffer a
+     * menu (shown wide). A row of see-through 16x16 tiles at x -8..328, every other one darker
+     * (period 32), is squeezed about the middle and repeated to fill the sides: each target column
+     * shows the native picture at the place a whole number of periods away that is on screen,
+     * blended once. What is drawn over it keeps its 4:3 shape: the HUD glyph, an untagged one (target
+     * 856..879), not a rectangle covering the whole width. The next frame without one is no menu. */
     {
+        uint16_t tex[16 * 16];
+        long badm = 0, badg = 0;
         g_sprite_ws = 0.75f;
         gpu_vblank();
-        hud_scene(1);                                   /* HUD first, as the clock in the toolbox */
-        gpu_menu_begin();
-        gpu_sprite_tag(0x3200, xy(0, 100));
-        gp0(0x65000000); gp0_at(xy(0, 100), 0x3200); gp0(0); gp0(xy(16, 16));
+        screen_320();
+        for (i = 0; i < 256; i++)
+            tex[i] = (uint16_t)(0x8000u | rgb15(i % 16 + 4, i / 16 + 4, (i * 7) % 31 + 1));
+        upload(640, 0, 16, 16, tex);
+        gp0(0xE100010A);                                /* 15-bit page at x=640, (B + F) / 2 */
+        for (i = 0; i < 21; i++) {
+            gpu_menu_begin(32);
+            gpu_sprite_tag(0x3200u + 16u * (uint32_t)i, xy(i * 16 - 8, 100));
+            gp0(0x66000000 | ((i & 1) ? 0x404040u : 0x808080u));
+            gp0_at(xy(i * 16 - 8, 100), 0x3200u + 16u * (uint32_t)i); gp0(0); gp0(xy(16, 16));
+        }
+        gpu_hud_begin(1);
+        gpu_sprite_tag(0x3000, xy(232, 19));
+        gp0(0x65000000); gp0_at(xy(232, 19), 0x3000); gp0(0); gp0(xy(8, 12));
+        gp0(0x65000000); gp0(xy(232, 60)); gp0(0); gp0(xy(8, 12));
+        gp0(0x6000FF00); gp0(xy(0, 140)); gp0(xy(320, 8));
+        gp0(0xE3000000 | 30u);                          /* drawing area 30..319, as the toolbox's help box */
+        gpu_sprite_tag(0x3010, xy(232, 170));
+        gp0(0x65000000); gp0_at(xy(232, 170), 0x3010); gp0(0); gp0(xy(8, 12));
+        gp0(0xE3000000);
         gpu_render_display(out, &w, &h);
         CHECK(gpu_display_menu(), "frame with a menu background: shown as a menu");
-        CHECK(out[400 * w] == argb15(px(0, 100)) && out[463 * w + 63] == argb15(px(15, 115)),
-              "menu background tile: not squeezed");
+        for (y = 400; y < 464; y++)
+            for (x = 0; x < w; x++) {
+                int t = 2 * x + 1 - 1280, p = 160 + (t >= 0 ? t / 6 : -((5 - t) / 6));   /* native column */
+                badm += out[y * w + x] != argb15(px(((p % 32) + 32) % 32, y / 4));
+            }
+        CHECK(badm == 0, "menu background: %ld pixels not the tiles squeezed and repeated", badm);
+        for (y = 76; y < 124; y++)
+            for (x = 856; x < 880; x++)
+                badg += (out[y * w + x] != argb15(px(232 + (x - 856) / 3, 19 + (y - 76) / 4))) +
+                        (out[(y + 164) * w + x] != argb15(px(232 + (x - 856) / 3, 60 + (y - 76) / 4))) +
+                        (out[(y + 604) * w + x] != argb15(px(232 + (x - 856) / 3, 170 + (y - 76) / 4)));
+        CHECK(badg == 0, "menu: %ld pixels of the HUD, the untagged glyph and the HUD in a narrowed drawing "
+              "area not squeezed about the centre", badg);
+        CHECK(out[560 * w] == argb15(px(0, 140)) && out[591 * w + 1279] == argb15(px(319, 147)) &&
+              (px(0, 140) & 0x3E0u), "menu: full-width rectangle not squeezed");
         gpu_vblank();
         hud_scene(0);
         CHECK(!gpu_display_menu(), "next frame without a menu background: no menu");

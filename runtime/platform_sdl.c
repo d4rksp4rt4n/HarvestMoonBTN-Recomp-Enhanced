@@ -603,14 +603,16 @@ static int prescale_target(int w, int h) {
 }
 
 /* Widescreen: the GTE squeezes the 3D world into the picture, which is shown stretched to the
- * wider aspect. Screens the game draws without 3D (title, menus, videos) are shown as they are,
- * at 4:3: the picture is wide while the game projected a 3D scene's worth of vertices in one of
- * the last few frames (it may draw only every other frame; with a full-screen menu open it still
- * projects a vertex or two, against thousands for a room) and the display isn't 24-bit video.
- * Leaving an area, the game stops drawing 3D and fades out the last picture, then shows black or
- * "Now Loading": all of that stays wide, so going from one area to the next never flashes to 4:3.
- * Only a picture that is mostly not black, without 3D, after a black one (a menu fading in from
- * black, from its first frame) switches to 4:3. */
+ * wider aspect. The title screen and the full-screen menus are wide too: the GPU repeats their
+ * background at the sides and keeps the rest 4:3 in the middle (upscale 2+). Other screens the
+ * game draws without 3D (videos, the map, ...) are shown as they are, at 4:3: the picture is wide
+ * while the game projected a 3D scene's worth of vertices in one of the last few frames (it may
+ * draw only every other frame; with a full-screen menu open it still projects a vertex or two,
+ * against thousands for a room) and the display isn't 24-bit video. Leaving an area, the game
+ * stops drawing 3D and fades out the last picture, then shows black or "Now Loading": all of that
+ * stays wide, so going from one area to the next never flashes to 4:3. Only a picture that is
+ * mostly not black, without 3D, after a black one (a screen fading in from black, from its first
+ * frame) switches to 4:3, and any picture without 3D after a menu. */
 static int display_dark(const GpuDisplay *d) {
     const uint16_t *vram = gpu_vram();
     int dark = 0;
@@ -643,14 +645,15 @@ static int display_wide(void) {
     else if (hold_3d > 0) hold_3d--;
     proj_mark = n;
     gpu_get_display(&d);
-    if (d.is_24bit || gpu_display_menu()) wide = 0;     /* video, or a full-screen menu */
+    if (d.is_24bit) wide = 0;                           /* video */
+    else if (gpu_display_menu()) wide = 2;              /* a full-screen menu or the title screen */
     else if (hold_3d > 0) { wide = 1; blank = 0; }
-    else if (!was_wide) wide = 0;
+    else if (was_wide != 1) wide = 0;                   /* not after a menu either ("Now Loading") */
     else if (display_dark(&d)) { wide = 1; blank = 1; }
     else wide = !blank;
-    if (wide != was_wide) LOGD("display: %s", wide ? "widescreen" : "4:3 (no 3D)");
+    if (!wide != !was_wide) LOGD("display: %s", wide ? "widescreen" : "4:3 (no 3D)");
     was_wide = wide;
-    return wide;
+    return wide != 0;
 }
 
 /* width:height of the picture on screen */
@@ -712,9 +715,8 @@ static void present(int w, int h, int wide, bool same) {
 }
 
 /* farmer 2's window: the second GPU's picture, scaled smoothly (or sharply) to fit. A picture kept
- * (the player's menu) keeps the shape it was made with: a full-screen menu is not widened, and the
- * kept picture was stretched to its shape. Shown again only when it changed (the game draws every
- * other VBlank) or the window did (win2_due) */
+ * (the player's menu) keeps the shape it was made with. Shown again only when it changed (the game
+ * draws every other VBlank) or the window did (win2_due) */
 static int win2_due = 1;            /* 2: the texture may have lost the picture too */
 static void present2(int wide_now) {
     static uint32_t changes;
