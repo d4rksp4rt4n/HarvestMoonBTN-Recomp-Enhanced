@@ -525,6 +525,43 @@ static void trade_empty(uint8_t *s) {
     for (uint32_t i = 0; i < sizeof trade_store; i++) MEM_W8(st + i, trade_store[i]);
 }
 
+/* The tool chest and the cabinet are in the house: their menus load their pictures over a corner of
+ * VRAM the farm's ground uses (320-383 x 0-255; leaving the house loads the farm's again). Opened
+ * outside by a trade, the ground was drawn with the menu's pictures until the area changed: that
+ * corner is kept when the trade opens and put back when it ends, in both GPUs. Not in STATE: kept
+ * by the frame's first run that opens it (the second window's comes first and already loads some
+ * of the menu), put back by the frame's own run. */
+#define TRADE_VRAM_X 320
+#define TRADE_VRAM_W 64
+#define TRADE_VRAM_H 256
+static uint16_t trade_vram[2][TRADE_VRAM_W * TRADE_VRAM_H];
+static int trade_vram_kept;
+static uint64_t trade_vram_frame;
+
+/* kind 0 starts a trade: a copy from another frame is an old one (an items' menu that never opened) */
+static void trade_vram_keep(int kind) {
+    if (trade_vram_kept && (kind || trade_vram_frame == frame_count())) return;
+    trade_vram_frame = frame_count();
+    const uint16_t *v[2] = { gpu_vram(), view2_gpu_vram() };
+    for (int g = 0; g < 2; g++)
+        for (int y = 0; y < TRADE_VRAM_H; y++)
+            memcpy(trade_vram[g] + y * TRADE_VRAM_W, v[g] + y * 1024 + TRADE_VRAM_X, TRADE_VRAM_W * 2);
+    trade_vram_kept = 1;
+}
+
+static void trade_vram_back(void) {
+    if (g_view2_run || !trade_vram_kept) return;
+    trade_vram_kept = 0;
+    void (*gp0[2])(uint32_t) = { gpu_write_gp0, view2_gpu_write_gp0 };
+    for (int g = 0; g < (g_view2 > 0 ? 2 : 1); g++) {     /* a CPU -> VRAM transfer, as the game's loads */
+        gp0[g](0xA0000000u);
+        gp0[g](TRADE_VRAM_X);
+        gp0[g]((uint32_t)TRADE_VRAM_H << 16 | TRADE_VRAM_W);
+        for (int i = 0; i < TRADE_VRAM_W * TRADE_VRAM_H; i += 2)
+            gp0[g](trade_vram[g][i] | (uint32_t)trade_vram[g][i + 1] << 16);
+    }
+}
+
 /* opens the storage's menu for the farmer in the player's place, as 800F6778 opens the cabinet's
  * and the X action (800C7AC0) marks the menu open */
 static void trade_open(CPU *c, uint32_t sp, int kind) {
@@ -553,6 +590,7 @@ static int trade_start(CPU *c, uint32_t sp, int who, const uint8_t *p, uint8_t *
         return 0;
     }
     trade_fill(o, kind);
+    trade_vram_keep(kind);
     trade_open(c, sp, kind);
     trade_who = who;
     return 1;
@@ -569,6 +607,8 @@ static void trade_end(void) {
     /* the items' menu next, if either has items */
     if (!trade_kind && (trade_carries(opener, 1) || trade_carries(other, 1) || opener[CARRIED + 6] | opener[CARRIED + 7]))
         trade_next = trade_who;
+    else
+        trade_vram_back();
     trade_who = 0;
 }
 
@@ -738,7 +778,39 @@ static void turn(CPU *c) {
     c->lo = lo;
 }
 
+/* Some actions and scenes link the player's animation to the extra file (800CD000) and the
+ * game links the farm's set back (800BD168) when they end. The scene of an animal's death ends
+ * with the player sitting and takes it home without that: the player came home sitting on the
+ * floor till a button was pressed (and farmer 2, placed as a copy, sat too). After an area loads,
+ * a player standing free (not led, state 1) on the extra file is stood up. Alone too. */
+#define ANIM_FILE 0x80071C74u   /* +274: the file the player's animation is linked to */
+#define EXTRA_FILE ANIMS
+#define STAND_UP 0x800BD168u
+#define STATE_NOW 0x3C          /* halfword: 1 standing, 2 walking, more in an action */
+
+static void stand_up(CPU *c) {
+    static uint16_t last_area;
+    static int32_t last_x, last_z;
+    static int pending;
+    if (g_view2_run) return;
+    int32_t x = (int32_t)MEM_R32(POS), z = (int32_t)MEM_R32(POS + 8);
+    if (MEM_R16(AREA) != last_area || abs(x - last_x) > 1024 || abs(z - last_z) > 1024) pending = 1;
+    last_area = (uint16_t)MEM_R16(AREA);
+    last_x = x;
+    last_z = z;
+    if (!pending || (MEM_R32(FLAGS) & LED)) return;
+    pending = 0;
+    if (MEM_R32(ANIM_FILE) != EXTRA_FILE || MEM_R16(PLAYER + STATE_NOW) != 1) return;
+    uint32_t regs[32], hi = c->hi, lo = c->lo;
+    memcpy(regs, c->r, sizeof regs);
+    call1(c, c->r[29], STAND_UP, 0);
+    memcpy(c->r, regs, sizeof regs);
+    c->hi = hi;
+    c->lo = lo;
+}
+
 void p2_tick(CPU *c) {
+    stand_up(c);
     turn(c);
     if (g_view2_run) p2_aim_view();
 }

@@ -143,6 +143,7 @@ void     view2_gpu_interp_work(int part);
 void     view2_gpu_interp_late(void);
 void     view2_gpu_write_gp0(uint32_t v);
 void     view2_gpu_write_gp1(uint32_t v);
+const uint16_t *view2_gpu_vram(void);
 uint32_t view2_gpu_read_data(void);
 uint32_t view2_gpu_read_status(void);
 void     view2_gpu_vblank(void);
